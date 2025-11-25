@@ -1,31 +1,29 @@
 package base
 
 import (
-	"fmt"
-	"os"
-	"io"
 	"bytes"
-	"strings"
+	"fmt"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/juju/errors"
 	toolkits "my2sql/toolkits"
-	"github.com/siddontang/go-log/log"
-	"github.com/go-mysql-org/go-mysql/mysql"
-        "github.com/go-mysql-org/go-mysql/replication"
-)
 
+	"github.com/go-mysql-org/go-mysql/mysql"
+	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/juju/errors"
+	"github.com/siddontang/go-log/log"
+)
 
 var (
 	fileBinEventHandlingIndex uint64 = 0
 	fileTrxIndex              uint64 = 0
 )
 
-
 type BinFileParser struct {
 	Parser *replication.BinlogParser
 }
-
 
 func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 	defer cfg.CloseChan()
@@ -35,13 +33,16 @@ func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 	log.Info(fmt.Sprintf("start to parse %s %d\n", binlog, binpos))
 
 	for {
+		log.Info(fmt.Sprintf("start to parse %s %d\n", binlog, binpos))
 		if cfg.IfSetStopFilePos {
-			if cfg.StopFilePos.Compare(mysql.Position{Name: filepath.Base(binlog), Pos: 4}) < 1 {
+			log.Debugf("stop file position is set to %s %d", cfg.StopFilePos.Name, cfg.StopFilePos.Pos)
+			if cfg.StopFilePos.Compare(mysql.Position{Name: filepath.Base(binlog), Pos: 4}) < 0 {
+				log.Info("stop to parse binlog from local files because stop file position is reached")
+				log.Debugf("current binlog file is %s", binlog)
 				break
 			}
 		}
 
-		log.Info(fmt.Sprintf("start to parse %s %d\n", binlog, binpos))
 		result, err := this.MyParseOneBinlogFile(cfg, binlog)
 		if err != nil {
 			log.Error(fmt.Sprintf("error to parse binlog %s %v", binlog, err))
@@ -52,6 +53,7 @@ func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 			break
 		} else if result == C_reFileEnd {
 			if !cfg.IfSetStopParsPoint && !cfg.IfSetStopDateTime {
+				log.Debugf("nor stop file or stop datetime is set, just parse current binlog file %s\n", binlog)
 				//just parse one binlog
 				break
 			}
@@ -74,6 +76,8 @@ func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 
 func (this BinFileParser) MyParseOneBinlogFile(cfg *ConfCmd, name string) (int, error) {
 	// process: 0, continue: 1, break: 2
+
+	log.Debugf("start to open %s", name)
 	f, err := os.Open(name)
 	if f != nil {
 		defer f.Close()
@@ -103,37 +107,37 @@ func (this BinFileParser) MyParseOneBinlogFile(cfg *ConfCmd, name string) (int, 
 	return this.MyParseReader(cfg, f, &binlog)
 }
 
-
 func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *string) (int, error) {
 	// process: 0, continue: 1, break: 2, EOF: 3
 	var (
-		err         error
-		n           int64
-		db          string = ""
-		tb          string = ""
-		sql         string = ""
-		sqlType     string = ""
-		rowCnt      uint32 = 0
-		trxStatus   int    = 0
-		sqlLower    string = ""
-		tbMapPos    uint32 = 0
+		err       error
+		n         int64
+		db        string = ""
+		tb        string = ""
+		sql       string = ""
+		sqlType   string = ""
+		rowCnt    uint32 = 0
+		trxStatus int    = 0
+		sqlLower  string = ""
+		tbMapPos  uint32 = 0
 	)
 
+	log.Debugf("start to parse %s with file reader, config: %#v", *binlog, *cfg)
 	for {
 		headBuf := make([]byte, replication.EventHeaderSize)
 
 		if _, err = io.ReadFull(r, headBuf); err == io.EOF {
+			log.Debugf("end to parse %s with file reader, config: %v", *binlog, *cfg)
 			return C_reFileEnd, nil
 		} else if err != nil {
 			log.Error(fmt.Sprintf("fail to read binlog event header of %s %v", *binlog, err))
 			return C_reBreak, errors.Trace(err)
 		}
 
-
 		var h *replication.EventHeader
 		h, err = this.Parser.ParseHeader(headBuf)
 		if err != nil {
-			log.Error(fmt.Sprintf("fail to parse binlog event header of %s %v" , *binlog, err))
+			log.Error(fmt.Sprintf("fail to parse binlog event header of %s %v", *binlog, err))
 			return C_reBreak, errors.Trace(err)
 		}
 		//fmt.Printf("parsing %s %d %s\n", *binlog, h.LogPos, GetDatetimeStr(int64(h.Timestamp), int64(0), DATETIME_FORMAT))
@@ -151,7 +155,6 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			return C_reBreak, err
 		}
 
-
 		//h.Dump(os.Stdout)
 
 		data := buf.Bytes()
@@ -160,6 +163,7 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 		rawData = append(rawData, data...)
 
 		eventLen := int(h.EventSize) - replication.EventHeaderSize
+		log.Debugf("event length is %d, raw data length is %d", eventLen, len(data))
 
 		if len(data) != eventLen {
 			err = errors.Errorf("invalid data size %d in event %s, less event length %d", len(data), h.EventType, eventLen)
@@ -167,24 +171,30 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			return C_reBreak, err
 		}
 
+		log.Debugf("now parsing binlog event")
 		var e replication.Event
 		e, err = this.Parser.ParseEvent(h, data, rawData)
 		if err != nil {
-			log.Error(fmt.Sprintf("fail to parse binlog event body of %s %v",*binlog, err))
+			log.Error(fmt.Sprintf("fail to parse binlog event body of %s %+v", *binlog, err))
 			return C_reBreak, errors.Trace(err)
 		}
 		if h.EventType == replication.TABLE_MAP_EVENT {
+			log.Debugf("event is table map event, num: %d", h.EventType)
 			tbMapPos = h.LogPos - h.EventSize // avoid mysqlbing mask the row event as unknown table row event
 		}
 
 		//e.Dump(os.Stdout)
 		//can not advance this check, because we need to parse table map event or table may not found. Also we must seek ahead the read file position
+		log.Debugf("now check binlog header condition")
 		chRe := CheckBinHeaderCondition(cfg, h, *binlog)
 		if chRe == C_reBreak {
+			log.Debugf("binlog header is C_reBreak")
 			return C_reBreak, nil
 		} else if chRe == C_reContinue {
+			log.Debugf("binlog header is C_reContinue")
 			continue
 		} else if chRe == C_reFileEnd {
+			log.Debugf("binlog header is C_reFileEnd")
 			return C_reFileEnd, nil
 		}
 
@@ -200,7 +210,7 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			continue
 		} else if chRe == C_reFileEnd {
 			return C_reFileEnd, nil
-		} 
+		}
 
 		db, tb, sqlType, sql, rowCnt = GetDbTbAndQueryAndRowCntFromBinevent(binEvent)
 		if sqlType == "query" {
@@ -220,18 +230,17 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			trxStatus = C_trxProcess
 		}
 
-
 		if cfg.WorkType != "stats" {
 			ifSendEvent := false
 			if oneMyEvent.IfRowsEvent {
 
 				tbKey := GetAbsTableName(string(oneMyEvent.BinEvent.Table.Schema),
-						string(oneMyEvent.BinEvent.Table.Table))
+					string(oneMyEvent.BinEvent.Table.Table))
 				_, err = G_TablesColumnsInfo.GetTableInfoJson(string(oneMyEvent.BinEvent.Table.Schema),
-						string(oneMyEvent.BinEvent.Table.Table))
+					string(oneMyEvent.BinEvent.Table.Table))
 				if err != nil {
 					log.Fatalf(fmt.Sprintf("no table struct found for %s, it maybe dropped, skip it. RowsEvent position:%s",
-							tbKey, oneMyEvent.MyPos.String()))
+						tbKey, oneMyEvent.MyPos.String()))
 				}
 				ifSendEvent = true
 			}
@@ -246,10 +255,9 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 				cfg.EventChan <- *oneMyEvent
 			}
 
+		}
 
-		} 
-
-		//output analysis result whatever the WorkType is	
+		//output analysis result whatever the WorkType is
 		if sqlType != "" {
 			if sqlType == "query" {
 				cfg.StatChan <- BinEventStats{Timestamp: h.Timestamp, Binlog: *binlog, StartPos: h.LogPos - h.EventSize, StopPos: h.LogPos,
@@ -260,9 +268,7 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			}
 		}
 
-
 	}
 
 	return C_reFileEnd, nil
 }
-

@@ -166,6 +166,7 @@ type ConfCmd struct {
 func (this *ConfCmd) ParseCmdOptions() {
 	var (
 		version   bool
+		debug     bool
 		dbs       string
 		tbs       string
 		ignoreDbs string
@@ -183,6 +184,7 @@ func (this *ConfCmd) ParseCmdOptions() {
 	}
 
 	flag.BoolVar(&version, "v", false, "print version")
+	flag.BoolVar(&debug, "debug", false, "debug mode")
 	flag.StringVar(&this.Mode, "mode", "repl", StrSliceToString(GOptsValidMode, C_joinSepComma, C_validOptMsg)+". repl: as a slave to get binlogs from master. file: get binlogs from local filesystem. default repl")
 	flag.StringVar(&this.WorkType, "work-type", "2sql", StrSliceToString(GOptsValidWorkType, C_joinSepComma, C_validOptMsg)+". 2sql: convert binlog to sqls, rollback: generate rollback sqls, stats: analyze transactions. default: 2sql")
 	flag.StringVar(&this.MysqlType, "mysql-type", "mysql", StrSliceToString(GOptsValidMysqlType, C_joinSepComma, C_validOptMsg)+". server of binlog, mysql or mariadb, default mysql")
@@ -230,6 +232,10 @@ func (this *ConfCmd) ParseCmdOptions() {
 	if version {
 		fmt.Printf("%s\n", C_Version)
 		os.Exit(0)
+	}
+
+	if debug {
+		log.SetLevel(log.LevelDebug)
 	}
 
 	if this.Mode != "repl" && this.Mode != "file" {
@@ -314,7 +320,7 @@ func (this *ConfCmd) ParseCmdOptions() {
 
 	if this.StartFile != "" {
 		this.IfSetStartFilePos = true
-		this.StartFilePos = mysql.Position{Name: this.StartFile, Pos: uint32(this.StartPos)}
+		this.StartFilePos = mysql.Position{Name: filepath.Base(this.StartFile), Pos: uint32(this.StartPos)}
 
 	} else {
 		this.IfSetStartFilePos = false
@@ -322,7 +328,7 @@ func (this *ConfCmd) ParseCmdOptions() {
 
 	if this.StopFile != "" {
 		this.IfSetStopFilePos = true
-		this.StopFilePos = mysql.Position{Name: this.StopFile, Pos: uint32(this.StopPos)}
+		this.StopFilePos = mysql.Position{Name: filepath.Base(this.StopFile), Pos: uint32(this.StopPos)}
 		this.IfSetStopParsPoint = true
 
 	} else {

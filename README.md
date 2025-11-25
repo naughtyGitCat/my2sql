@@ -198,6 +198,8 @@ cd $GOPATH/src
 git clone https://github.com/liuhr/my2sql.git
 cd my2sql/
 go build .
+# or 
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build .
 ```
 
 

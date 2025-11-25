@@ -1,14 +1,15 @@
 package base
 
 import (
-	"sync"
 	"path/filepath"
+	"sync"
 
 	"my2sql/dsql"
 	toolkits "my2sql/toolkits"
-	"github.com/siddontang/go-log/log"
+
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/siddontang/go-log/log"
 )
 
 type BinEventHandlingIndx struct {
@@ -159,35 +160,42 @@ BinEventCheck:
 
 }
 
-
-func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, currentBinlog string) (int) {
+func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, currentBinlog string) int {
 	// process: 0, continue: 1, break: 2
 
 	myPos := mysql.Position{Name: currentBinlog, Pos: header.LogPos}
+	log.Debugf("check binlog header condition, my pos %#v", myPos)
+	log.Debugf("now check start file position")
 	//fmt.Println(cfg.StartFilePos, cfg.IfSetStopFilePos, myPos)
 	if cfg.IfSetStartFilePos {
+		log.Debugf("start file pos been set to %#v", cfg.StartFilePos)
 		cmpRe := myPos.Compare(cfg.StartFilePos)
 		if cmpRe == -1 {
 			return C_reContinue
 		}
 	}
 
+	log.Debugf("now check stop file position")
 	if cfg.IfSetStopFilePos {
+		log.Debugf("stop file pos been set to %#v", cfg.StopFilePos)
 		cmpRe := myPos.Compare(cfg.StopFilePos)
 		if cmpRe >= 0 {
 			return C_reBreak
 		}
 	}
-	
+
+	log.Debugf("now check start datetime")
 	//fmt.Println(cfg.StartDatetime, cfg.StopDatetime, header.Timestamp)
 	if cfg.IfSetStartDateTime {
-
+		log.Debugf("start datetime been set to %#v", cfg.StopDatetime)
 		if header.Timestamp < cfg.StartDatetime {
 			return C_reContinue
 		}
 	}
 
+	log.Debugf("now check stop datetime")
 	if cfg.IfSetStopDateTime {
+		log.Debugf("stop datetime been set to %#v", cfg.StopDatetime)
 		if header.Timestamp >= cfg.StopDatetime {
 			return C_reBreak
 		}
